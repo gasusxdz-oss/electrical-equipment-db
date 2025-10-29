@@ -18,7 +18,7 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 CORS(app)
 
 # ----- 設定 -----
-FIREBASE_CRED_PATH = "electrical-equipment-db-firebase-adminsdk-fbsvc-816a1b8dc7.json"
+FIREBASE_CRED_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "electrical-equipment-db-firebase-adminsdk-fbsvc-816a1b8dc7.json")
 FIRESTORE_COLLECTION = "buildings"
 
 # ----- データ読み込み（キャッシュ） -----
@@ -301,3 +301,4 @@ def api_get_data():
 if __name__ == "__main__":
     # デバッグ実行（本番は Gunicorn 等を推奨）
     app.run(host="0.0.0.0", port=5000, debug=True)
+
