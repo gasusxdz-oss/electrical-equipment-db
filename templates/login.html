@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>ログイン - 建物データ分析ツール</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* ログイン専用のスタイル */
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Meiryo", "Segoe UI", Arial, sans-serif;
+      margin: 0;
+    }
+
+    .login-container {
+      background: var(--panel);
+      padding: 30px 40px;
+      border-radius: 12px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    .login-container h1 {
+      font-size: 18px;
+      margin-bottom: 24px;
+      color: var(--text);
+    }
+
+    .login-container input[type="text"],
+    .login-container input[type="password"] {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 16px;
+      border-radius: 6px;
+      border: 1px solid var(--muted);
+      background: #2F3540;
+      color: var(--text);
+      font-size: 14px;
+      box-sizing: border-box; /* パディング込みで幅を調整 */
+    }
+
+    .login-container input[type="submit"] {
+      width: 100%;
+      padding: 10px;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .login-container input[type="submit"]:hover {
+      background: #81A1C1;
+    }
+
+    .login-container .msg {
+      margin-top: 12px;
+      font-size: 13px;
+      color: orangered;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="login-container">
+    <h1>メールアドレスとパスワードを入力してください</h1>
+    <form action='login' method='POST'>
+        <input type='text' name='email' id='email' placeholder='メールアドレス' required/>
+        <input type='password' name='password' id='password' placeholder='パスワード' required/>
+        <input type='submit' name='submit' value='ログイン'/>
+    </form>
+    {% if msg %}
+      <div class="msg">{{msg}}</div>
+    {% endif %}
+  </div>
+
+</body>
+</html>

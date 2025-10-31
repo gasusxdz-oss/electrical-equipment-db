@@ -1,23 +1,49 @@
 # app.py
 import os
 import json
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
 
-# Firestore imports (optional)
+# optional external libs (pyrebase)
+try:
+    import pyrebase
+    PYREBASE_AVAILABLE = True
+except Exception:
+    PYREBASE_AVAILABLE = False
+
+# Firebase Admin (Firestore) optional
 try:
     import firebase_admin
     from firebase_admin import credentials, firestore
-    FIREBASE_AVAILABLE = True
+    FIREBASE_ADMIN_AVAILABLE = True
 except Exception:
-    FIREBASE_AVAILABLE = False
+    FIREBASE_ADMIN_AVAILABLE = False
 
+# Flask app
 app = Flask(__name__, static_folder="static", template_folder="templates")
+app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
 CORS(app)
 
-# ----- 設定 -----
+# --- pyrebase 初期化（存在すれば） ---
+auth = None
+if PYREBASE_AVAILABLE and os.path.exists("firebaseConfig.json"):
+    try:
+        with open("firebaseConfig.json", "r", encoding="utf-8") as f:
+            firebaseConfig = json.load(f)
+        firebase = pyrebase.initialize_app(firebaseConfig)
+        auth = firebase.auth()
+    except Exception as e:
+        print("pyrebase init failed:", e)
+        auth = None
+else:
+    if not PYREBASE_AVAILABLE:
+        print("pyrebase not installed; Firebase auth disabled.")
+    else:
+        print("firebaseConfig.json not found; Firebase auth disabled.")
+
+# --- Firestore 初期化設定（オプション） ---
 FIREBASE_CRED_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "electrical-equipment-db-firebase-adminsdk-fbsvc-816a1b8dc7.json")
 FIRESTORE_COLLECTION = "buildings"
 
@@ -25,7 +51,6 @@ FIRESTORE_COLLECTION = "buildings"
 _df_cache = None
 
 def _load_sample_data():
-    # Firestore が使えない時のサンプルデータ（最低限の列を持つ）
     data = [
         {"建物名称":"Aビル","建物用途":"生産施設","発行目的":"実施設計図","設計会社":"大成建設","変圧器の主な設置場所":"地上",
          "延床面積 [㎡]": 1200.0, "合計設備容量 [kVA]": 500.0, "一般電灯容量 [kVA]": 50.0, "階数": 3},
@@ -45,8 +70,9 @@ def load_firestore_data():
     if _df_cache is not None:
         return _df_cache
 
+    df = None
     # Try Firestore if available and credential file exists
-    if FIREBASE_AVAILABLE and os.path.exists(FIREBASE_CRED_PATH):
+    if FIREBASE_ADMIN_AVAILABLE and os.path.exists(FIREBASE_CRED_PATH):
         try:
             if not firebase_admin._apps:
                 cred = credentials.Certificate(FIREBASE_CRED_PATH)
@@ -72,7 +98,6 @@ def load_firestore_data():
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # 欠損列に対して空列を入れておく（フロントが期待する列）
     expected_cols = ["建物名称","建物用途","発行目的","設計会社","変圧器の主な設置場所"] + numeric_cols
     for c in expected_cols:
         if c not in df.columns:
@@ -81,7 +106,7 @@ def load_firestore_data():
     _df_cache = df
     return df
 
-# usage color map (Python側で定義。フロントにも渡す)
+# usage color map
 USAGE_COLORS = {
     "生産施設": "#7FB3D5",
     "研究施設": "#82E0AA",
@@ -89,21 +114,42 @@ USAGE_COLORS = {
     "その他": "#D7BDE2"
 }
 
-# ----- ルート: メインページ -----
-@app.route("/")
+# ----- ルート: ログイン / インデックス / ログアウト -----
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'GET':
+        return render_template("login.html", msg="")
+    if auth is None:
+        return render_template("login.html", msg="認証機能が利用できません（サーバー設定を確認してください）。")
+    email = request.form.get('email', '').strip()
+    password = request.form.get('password', '')
+    try:
+        user = auth.sign_in_with_email_and_password(email, password)
+        session['usr'] = email
+        return redirect(url_for('index'))
+    except Exception:
+        return render_template("login.html", msg="メールアドレスまたはパスワードが間違っています。")
+
+@app.route("/", methods=['GET'])
 def index():
+    usr = session.get('usr')
+    # 未ログインならログインページへ（認証無効時はログイン無しで進める想定にしたければここを変更）
+    if usr is None and auth is not None:
+        return redirect(url_for('login'))
+
     df = load_firestore_data()
-    # フロントで選択肢に使う列名一覧（表示順序は任意）
     cols = ["延床面積 [㎡]","生産エリアの延床面積 [㎡]","非生産エリアの延床面積 [㎡]","建築面積 [㎡]","階数",
             "合計設備容量 [kVA]","一般電灯容量 [kVA]","一般動力容量 [kVA]","一般動力(400V)容量 [kVA]",
             "生産電灯容量 [kVA]","生産動力容量 [kVA]","生産動力(400V)容量 [kVA]","合計変圧器容量 [kVA]"]
-    # フィルタ用のユニーク値（チェックボックス用）
-    usages = sorted([str(x) for x in df["建物用途"].dropna().unique()])
-    purposes = sorted([str(x) for x in df["発行目的"].dropna().unique()])
-    companies = sorted([str(x) for x in df["設計会社"].dropna().unique()])
-    transformers = sorted([str(x) for x in df["変圧器の主な設置場所"].dropna().unique()])
+
+    # dropna の前に列が存在することを確認
+    usages = sorted([str(x) for x in df["建物用途"].dropna().unique()]) if "建物用途" in df.columns else []
+    purposes = sorted([str(x) for x in df["発行目的"].dropna().unique()]) if "発行目的" in df.columns else []
+    companies = sorted([str(x) for x in df["設計会社"].dropna().unique()]) if "設計会社" in df.columns else []
+    transformers = sorted([str(x) for x in df["変圧器の主な設置場所"].dropna().unique()]) if "変圧器の主な設置場所" in df.columns else []
 
     return render_template("index.html",
+                           usr=usr,
                            columns=cols,
                            usages=usages,
                            purposes=purposes,
@@ -111,26 +157,22 @@ def index():
                            transformers=transformers,
                            usage_colors=USAGE_COLORS)
 
+@app.route('/logout')
+def logout():
+    session.pop('usr', None)
+    return redirect(url_for('login'))
+
 # ----- データ API -----
 @app.route("/api/get_data", methods=["POST"])
 def api_get_data():
-    """
-    期待される JSON:
-    {
-      x_col, y_col, graph_type ("散布図"|"ヒストグラム"),
-      degree (1|2|3),
-      filters: { "建物用途":[...], "発行目的":[...], "設計会社":[...], "変圧器の主な設置場所":[...] },
-      capacity_min, capacity_max,
-      log_x (bool), log_y (bool),
-      search (string)
-    }
-    戻り値は Plotly に渡しやすい JSON 構造。
-    """
     body = request.get_json(force=True)
     x_col = body.get("x_col")
     y_col = body.get("y_col")
     graph_type = body.get("graph_type", "散布図")
-    degree = int(body.get("degree", 1))
+    try:
+        degree = int(body.get("degree", 1))
+    except Exception:
+        degree = 1
     filters = body.get("filters", {}) or {}
     capacity_min = body.get("capacity_min", None)
     capacity_max = body.get("capacity_max", None)
@@ -149,7 +191,7 @@ def api_get_data():
     }
     for key, colname in filter_map.items():
         allow = filters.get(key, [])
-        if allow:
+        if allow and colname in df.columns:
             df = df[df[colname].isin(allow)]
 
     # 容量範囲フィルタ（合計設備容量を対象）
@@ -157,73 +199,80 @@ def api_get_data():
         try:
             minv = float(capacity_min)
             if "合計設備容量 [kVA]" in df.columns:
-                df = df[df["合計設備容量 [kVA]"].astype(float) >= minv]
+                df = df[pd.to_numeric(df["合計設備容量 [kVA]"], errors="coerce") >= minv]
         except Exception:
             pass
     if capacity_max is not None and str(capacity_max).strip() != "":
         try:
             maxv = float(capacity_max)
             if "合計設備容量 [kVA]" in df.columns:
-                df = df[df["合計設備容量 [kVA]"].astype(float) <= maxv]
+                df = df[pd.to_numeric(df["合計設備容量 [kVA]"], errors="coerce") <= maxv]
         except Exception:
             pass
 
     # 検索（建物名称）
-    if search:
-        if "建物名称" in df.columns:
-            df = df[df["建物名称"].fillna("").str.lower().str.contains(search, na=False)]
+    if search and "建物名称" in df.columns:
+        df = df[df["建物名称"].fillna("").str.lower().str.contains(search, na=False)]
 
-    # NaN 切り捨て
-    if x_col not in df.columns or (graph_type == "散布図" and y_col not in df.columns):
+    # 必要列チェック
+    if x_col not in df.columns or (graph_type == "散布図" and (y_col not in df.columns)):
         return jsonify({"error":"指定された列が存在しません"}), 400
 
     # 散布図
     if graph_type == "散布図":
         df_plot = df.dropna(subset=[x_col, y_col]).copy()
-        # 数値変換
         df_plot[x_col] = pd.to_numeric(df_plot[x_col], errors="coerce")
         df_plot[y_col] = pd.to_numeric(df_plot[y_col], errors="coerce")
-        df_plot = df_plot.dropna(subset=[x_col,y_col])
+        df_plot = df_plot.dropna(subset=[x_col, y_col])
 
         traces = []
-        # グループごとに色分け
-        for usage, group in df_plot.groupby("建物用途"):
-            color = USAGE_COLORS.get(usage, "#999999")
+        group_col = "建物用途" if "建物用途" in df_plot.columns else None
+        if group_col:
+            groups = df_plot.groupby(group_col)
+        else:
+            groups = [("全体", df_plot)]
+
+        for usage, group in groups:
+            usage_str = usage if (usage is not None and str(usage).strip() != "") else "未定義"
+            color = USAGE_COLORS.get(usage_str, "#999999")
             trace = {
                 "type":"scatter",
                 "mode":"markers",
-                "name": usage if usage is not None else "未定義",
-                "x": group[x_col].tolist(),
-                "y": group[y_col].tolist(),
-                "marker": {"size":8},
+                "name": usage_str,
+                "x": group[x_col].astype(float).tolist(),
+                "y": group[y_col].astype(float).tolist(),
+                "marker": {"size":8, "color": color},
                 "customdata": group[["建物名称","発行目的","設計会社", x_col, y_col]].fillna("").astype(str).values.tolist()
             }
-            # set marker color
-            trace["marker"]["color"] = color
             traces.append(trace)
 
-        # ハイライト（検索対象は既にフィルタされているため、別枠で返す）
+        # ハイライト
         highlight = []
-        if search:
+        if search and "建物名称" in df.columns:
             df_high = load_firestore_data().copy()
             df_high = df_high[df_high["建物名称"].fillna("").str.lower().str.contains(search, na=False)]
-            df_high = df_high.dropna(subset=[x_col,y_col])
-            highlight = [{
-                "x": df_high[x_col].tolist(),
-                "y": df_high[y_col].tolist(),
-                "marker": {"size":14, "color":"rgba(255,0,0,0.6),", "symbol":"circle-open"},
-                "type":"scatter",
-                "mode":"markers+lines",
-                "name":"検索ハイライト"
-            }] if not df_high.empty else []
+            if not df_high.empty and x_col in df_high.columns and y_col in df_high.columns:
+                df_high = df_high.dropna(subset=[x_col, y_col])
+                df_high[x_col] = pd.to_numeric(df_high[x_col], errors="coerce")
+                df_high[y_col] = pd.to_numeric(df_high[y_col], errors="coerce")
+                df_high = df_high.dropna(subset=[x_col, y_col])
+                if not df_high.empty:
+                    highlight = [{
+                        "x": df_high[x_col].astype(float).tolist(),
+                        "y": df_high[y_col].astype(float).tolist(),
+                        "marker": {"size":14, "color":"rgba(255,0,0,0.6)", "symbol":"circle-open"},
+                        "type":"scatter",
+                        "mode":"markers",
+                        "name":"検索ハイライト"
+                    }]
 
         # 近似多項式（全データで計算）
         fit = None
+        eq = ""
         try:
             if len(df_plot) >= max(2, degree+1):
                 x = df_plot[x_col].astype(float).values
                 y = df_plot[y_col].astype(float).values
-                # 数値が非正あるいは同一直線で polyfit が失敗する場合に備えて try
                 coeffs = np.polyfit(x, y, degree)
                 p = np.poly1d(coeffs)
                 x_sorted = np.linspace(np.nanmin(x), np.nanmax(x), 200)
@@ -235,7 +284,6 @@ def api_get_data():
                     "mode": "lines",
                     "line": {"width":1.5, "color":"#1f77b4"}
                 }
-                # 近似式文字列（人間可読）
                 terms = []
                 n = len(coeffs)-1
                 for i, c in enumerate(coeffs):
@@ -269,21 +317,29 @@ def api_get_data():
         df_plot = df.dropna(subset=[x_col]).copy()
         df_plot[x_col] = pd.to_numeric(df_plot[x_col], errors="coerce")
         df_plot = df_plot.dropna(subset=[x_col])
-        # bins を固定数で作る
         bins = int(body.get("bins", 20))
         try:
             counts, bin_edges = np.histogram(df_plot[x_col].values, bins=bins)
-            # グループ別に積み上げたい場合は別途実装（ここではカテゴリ別に半透明で重ねる）
             traces = []
-            for usage, group in df_plot.groupby("建物用途"):
-                counts_g, _ = np.histogram(group[x_col].values, bins=bin_edges)
+            if "建物用途" in df_plot.columns:
+                for usage, group in df_plot.groupby("建物用途"):
+                    usage_str = usage if (usage is not None and str(usage).strip() != "") else "未定義"
+                    counts_g, _ = np.histogram(group[x_col].values, bins=bin_edges)
+                    traces.append({
+                        "type":"bar",
+                        "name": usage_str,
+                        "x": bin_edges[:-1].tolist(),
+                        "y": counts_g.tolist(),
+                        "marker": {"color": USAGE_COLORS.get(usage_str, "#888888")},
+                    })
+            else:
                 traces.append({
                     "type":"bar",
-                    "name": usage,
+                    "name":"件数",
                     "x": bin_edges[:-1].tolist(),
-                    "y": counts_g.tolist(),
-                    "marker": {"color": USAGE_COLORS.get(usage, "#888888")},
+                    "y": counts.tolist(),
                 })
+
             response = {
                 "traces": traces,
                 "xaxis": {"title": x_col, "type": ("log" if log_x else "linear")},
@@ -293,12 +349,9 @@ def api_get_data():
             return jsonify(response)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-
     else:
         return jsonify({"error":"不明な graph_type"}), 400
 
-
 if __name__ == "__main__":
     # デバッグ実行（本番は Gunicorn 等を推奨）
-    app.run(host="0.0.0.0", port=5000, debug=True)
-
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

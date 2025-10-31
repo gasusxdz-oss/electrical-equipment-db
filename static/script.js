@@ -23,9 +23,18 @@ document.addEventListener("DOMContentLoaded", () => {
     xSelect.appendChild(o1);
     ySelect.appendChild(o2);
   });
-  // デフォルト
-  xSelect.value = "延床面積 [㎡]" in cols ? "延床面積 [㎡]" : cols[0];
-  ySelect.value = "合計設備容量 [kVA]" in cols ? "合計設備容量 [kVA]" : cols[Math.min(1, cols.length-1)];
+// デフォルト
+if (cols.includes("延床面積 [㎡]")) {
+  xSelect.value = "延床面積 [㎡]";
+} else {
+  xSelect.value = cols[0];
+}
+
+if (cols.includes("合計設備容量 [kVA]")) {
+  ySelect.value = "合計設備容量 [kVA]";
+} else {
+  ySelect.value = cols[Math.min(1, cols.length - 1)];
+}
 
   // フィルタ取得ヘルパー
   function gatherFilters() {
@@ -80,8 +89,26 @@ document.addEventListener("DOMContentLoaded", () => {
       paper_bgcolor: "#2E3440",
       plot_bgcolor: "#0B1420",
       margin: {t:40, r:20, l:60, b:60},
-      xaxis: Object.assign({gridcolor:"#444444", zerolinecolor:"#444444"}, data.xaxis),
-      yaxis: Object.assign({gridcolor:"#444444", zerolinecolor:"#444444"}, data.yaxis),
+      xaxis: Object.assign(
+        {
+          gridcolor: "#444444",
+          zerolinecolor: "#444444",
+          titlefont: {color: "#FFFFFF"},
+          tickfont: {color: "#FFFFFF"},
+          tickformat: "d"
+        },
+        data.xaxis
+      ),
+      yaxis: Object.assign(
+        {
+          gridcolor: "#444444",
+          zerolinecolor: "#444444",
+          titlefont: {color: "#FFFFFF"},
+          tickfont: {color: "#FFFFFF"},
+          tickformat: "d"
+        },
+        data.yaxis
+      ),
       legend: {bgcolor: "#2E3440", font: {color:"#ECEFF4"}},
       hovermode: "closest",
     };
@@ -95,7 +122,7 @@ document.addEventListener("DOMContentLoaded", () => {
     traces.forEach(t => {
       if (t.type === "scatter" && t.customdata) {
         t.hovertemplate = "%{customdata[0]}<br>発行目的:%{customdata[1]}<br>設計会社:%{customdata[2]}<br>" +
-                          `${xSelect.value}: %{x}<br>${ySelect.value}: %{y}<extra></extra>`;
+                          `${xSelect.value}: %{x:.0f}<br>${ySelect.value}: %{y:.0f}<extra></extra>`;
       } else if (t.type === "bar") {
         t.hovertemplate = `${xSelect.value}: %{x}<br>件数: %{y}<extra></extra>`;
       }
