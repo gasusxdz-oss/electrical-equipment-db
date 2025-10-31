@@ -37,6 +37,8 @@ if PYREBASE_AVAILABLE:
         elif os.path.exists("firebaseConfig.json"):
             with open("firebaseConfig.json", "r", encoding="utf-8") as f:
                 firebaseConfig = json.load(f)
+        elif os.environ.get("FIREBASE_CONFIG"):
+            firebaseConfig = os.getenv("FIREBASE_CONFIG", "firebaseConfig.json")
         else:
             firebaseConfig = None
 
@@ -363,4 +365,5 @@ def api_get_data():
 if __name__ == "__main__":
     # デバッグ実行（本番は Gunicorn 等を推奨）
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
 
