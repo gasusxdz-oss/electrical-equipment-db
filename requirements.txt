@@ -1,8 +1,7 @@
 flask
-gunicorn
+flask-cors
+requests
 firebase-admin
 pandas
 numpy
-plotly
-flask-cors
-pyrebase4
+gunicorn
