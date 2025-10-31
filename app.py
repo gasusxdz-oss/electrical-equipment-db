@@ -8,7 +8,7 @@ import numpy as np
 
 # optional external libs (pyrebase)
 try:
-    import pyrebase
+    import pyrebase4
     PYREBASE_AVAILABLE = True
 except Exception:
     PYREBASE_AVAILABLE = False
@@ -365,6 +365,7 @@ def api_get_data():
 if __name__ == "__main__":
     # デバッグ実行（本番は Gunicorn 等を推奨）
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
 
 
 
