@@ -31,7 +31,16 @@ auth = None
 if PYREBASE_AVAILABLE:
     try:
         # Renderなどで環境変数から設定を取得
-        firebaseConfig = os.getenv("FIREBASE_CONFIG", "firebaseConfig.json")
+        firebase_config_env = os.environ.get("FIREBASE_CONFIG")
+        if firebase_config_env:
+            firebaseConfig = json.loads(firebase_config_env)
+        elif os.path.exists("firebaseConfig.json"):
+            with open("firebaseConfig.json", "r", encoding="utf-8") as f:
+                firebaseConfig = json.load(f)
+        elif os.environ.get("FIREBASE_CONFIG"):
+            firebaseConfig = os.getenv("FIREBASE_CONFIG", "firebaseConfig.json")
+        else:
+            firebaseConfig = None
 
         if firebaseConfig:
             firebase = pyrebase.initialize_app(firebaseConfig)
@@ -356,6 +365,7 @@ def api_get_data():
 if __name__ == "__main__":
     # デバッグ実行（本番は Gunicorn 等を推奨）
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
 
 
 
