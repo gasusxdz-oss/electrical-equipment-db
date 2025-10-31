@@ -1,17 +1,11 @@
 # app.py
 import os
 import json
+import requests
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
-
-# optional external libs (pyrebase)
-try:
-    import pyrebase
-    PYREBASE_AVAILABLE = True
-except Exception:
-    PYREBASE_AVAILABLE = False
 
 # Firebase Admin (Firestore) optional
 try:
@@ -26,32 +20,28 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
 CORS(app)
 
-# --- pyrebase 初期化（存在すれば） ---
-auth = None
-if PYREBASE_AVAILABLE:
-    try:
-        # Renderなどで環境変数から設定を取得
-        firebase_config_env = os.environ.get("FIREBASE_CONFIG")
-        if firebase_config_env:
-            firebaseConfig = json.loads(firebase_config_env)
-        elif os.path.exists("firebaseConfig.json"):
-            with open("firebaseConfig.json", "r", encoding="utf-8") as f:
-                firebaseConfig = json.load(f)
-        elif os.environ.get("FIREBASE_CONFIG"):
-            firebaseConfig = os.getenv("FIREBASE_CONFIG", "firebaseConfig.json")
-        else:
-            firebaseConfig = None
 
-        if firebaseConfig:
-            firebase = pyrebase.initialize_app(firebaseConfig)
-            auth = firebase.auth()
-        else:
-            print("firebaseConfig not provided; Firebase auth disabled.")
-    except Exception as e:
-        print("pyrebase init failed:", e)
-        auth = None
-else:
-    print("pyrebase not installed; Firebase auth disabled.")
+
+# from dotenv import load_dotenv
+# load_dotenv()  # .envファイルを読み込む
+# FIREBASE_API_KEY = os.getenv("FIREBASE_API_KEY")
+
+# --- Firebase REST APIによる認証設定 ---
+FIREBASE_API_KEY = os.environ.get("FIREBASE_API_KEY")  # ← Renderの環境変数で設定しておく
+FIREBASE_REST_AUTH_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
+
+def firebase_sign_in(email: str, password: str):
+    """Firebase REST API を使ってサインインする"""
+    if not FIREBASE_API_KEY:
+        raise RuntimeError("FIREBASE_API_KEY not set")
+
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    response = requests.post(FIREBASE_REST_AUTH_URL, json=payload)
+    if response.status_code == 200:
+        return response.json()  # IDトークンなどが返る
+    else:
+        raise ValueError(f"Firebase認証失敗: {response.text}")
+
 
 # --- Firestore 初期化設定（オプション） ---
 FIREBASE_CRED_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "electrical-equipment-db-firebase-adminsdk-fbsvc-816a1b8dc7.json")
@@ -124,27 +114,32 @@ USAGE_COLORS = {
     "その他": "#D7BDE2"
 }
 
-# ----- ルート: ログイン / インデックス / ログアウト -----
+
+# --- ログイン関連 ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
         return render_template("login.html", msg="")
-    if auth is None:
+
+    if not FIREBASE_API_KEY:
         return render_template("login.html", msg="認証機能が利用できません（サーバー設定を確認してください）。")
+
     email = request.form.get('email', '').strip()
     password = request.form.get('password', '')
+
     try:
-        user = auth.sign_in_with_email_and_password(email, password)
-        session['usr'] = email
+        user_info = firebase_sign_in(email, password)
+        session['usr'] = user_info.get('email', email)
+        session['idToken'] = user_info.get('idToken')
         return redirect(url_for('index'))
-    except Exception:
+    except Exception as e:
+        print("Login error:", e)
         return render_template("login.html", msg="メールアドレスまたはパスワードが間違っています。")
 
-@app.route("/", methods=['GET'])
+@app.route("/")
 def index():
     usr = session.get('usr')
-    # 未ログインならログインページへ（認証無効時はログイン無しで進める想定にしたければここを変更）
-    if usr is None and auth is not None:
+    if usr is None and FIREBASE_API_KEY:
         return redirect(url_for('login'))
 
     df = load_firestore_data()
@@ -167,9 +162,10 @@ def index():
                            transformers=transformers,
                            usage_colors=USAGE_COLORS)
 
-@app.route('/logout')
+
+@app.route("/logout")
 def logout():
-    session.pop('usr', None)
+    session.clear()
     return redirect(url_for('login'))
 
 # ----- データ API -----
@@ -365,9 +361,3 @@ def api_get_data():
 if __name__ == "__main__":
     # デバッグ実行（本番は Gunicorn 等を推奨）
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
-
-
-
-
-
-
